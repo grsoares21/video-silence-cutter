@@ -1,5 +1,10 @@
 import { exec } from "child_process";
 import * as fs from "fs";
+import silenceMachineCreator from "./silenceMachine";
+
+const silenceThreshold = 0.1;
+const attackTime = 5;
+const releaseTime = 3;
 
 //TODO: create temp folder if it doesn't exist, it if does, raise an error
 /*exec(
@@ -45,8 +50,12 @@ readStream.on("end", () => {
   const byteRate = fileData.readInt32LE(28);
   const bitsPerSample = fileData.readInt16LE(34);
 
-  let byteOffsetToSeconds = (offset: number): number => {
-    return Math.round(offset / (sampleRate * byteRate * channelNumbers));
+  let byteToSeconds = (bytes: number): number => {
+    return Math.round(bytes / byteRate);
+  };
+
+  let byteToMilisseconds = (bytes: number): number => {
+    return Math.round(bytes / (byteRate / 1000));
   };
 
   console.log(`
@@ -82,8 +91,32 @@ readStream.on("end", () => {
 
   let maxvolume = getMaxVolume(fileData, 78);
   console.log(
-    `Max volume: ${maxvolume.maxVolume} Byte offset: ${maxvolume.offset}`
+    `Max volume: ${maxvolume.maxVolume} Byte offset: ${
+      maxvolume.offset
+    } No Of seconds: ${byteToSeconds(maxvolume.offset)}`
   );
+
+  const silenceMachine = silenceMachineCreator(attackTime, releaseTime);
+
+  let previousState = null;
+  let i = 78;
+  silenceMachine.onTransition((state) => {
+    if (state.changed && state.value !== previousState) {
+      previousState = state.value;
+      console.log(`At ${byteToSeconds(i)}s: ${state.value}`);
+    }
+  });
+
+  silenceMachine.start();
+  // TODO: discretize volume on time
+  for (; i < 120 * byteRate; i += 2) {
+    let currentSample = fileData.readInt16LE(i);
+    if (Math.abs(currentSample) < maxvolume.maxVolume * silenceThreshold) {
+      silenceMachine.send("SAMPLE_SILENCE");
+    } else {
+      silenceMachine.send("SAMPLE_NOISY");
+    }
+  }
 });
 
 function readBytesAsText(buffer: Buffer, offset: number, size: number): string {

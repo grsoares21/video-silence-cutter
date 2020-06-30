@@ -2,25 +2,24 @@ import { exec } from "child_process";
 import * as fs from "fs";
 import silenceMachineCreator from "./silenceMachine";
 
-const silenceThreshold = 0.1;
-const attackTime = 5;
-const releaseTime = 3;
+const silenceThreshold = 0.075;
+const attackTime = 30;
+const releaseTime = 10;
 
 //TODO: create temp folder if it doesn't exist, it if does, raise an error
-/*exec(
-  "ffmpeg -i raw.mp4 -ab 160k -ac 2 -vn temp/audio.wav",
-  (error, stdout, stderr) => {
-    if (error) {
-      console.error(`error: ${error.message}`);
-      return;
-    }
-    if (stderr) {
-      console.error(`${stderr}`);
-      return;
-    }
-    console.log(`${stdout}`);
+/*exec("ffmpeg -i raw.mp4 -ab 160k -ac 2 -vn temp/audio.wav", (error, stdout, stderr) => {
+  if (error) {
+    console.error(`error: ${error.message}`);
+    return;
   }
-);*/
+  if (stderr) {
+    console.error(`${stderr}`);
+    return;
+  }
+  console.log(`${stdout}`);
+});*/
+
+type Section = { from: number; to?: number };
 
 const readStream = fs.createReadStream("temp/audio.wav");
 const data: Buffer[] = [];
@@ -91,32 +90,72 @@ readStream.on("end", () => {
 
   let maxvolume = getMaxVolume(fileData, 78);
   console.log(
-    `Max volume: ${maxvolume.maxVolume} Byte offset: ${
+    `Max volume: ${maxvolume.maxVolume} Byte offset: ${maxvolume.offset} No Of seconds: ${byteToSeconds(
       maxvolume.offset
-    } No Of seconds: ${byteToSeconds(maxvolume.offset)}`
+    )}`
   );
 
   const silenceMachine = silenceMachineCreator(attackTime, releaseTime);
 
   let previousState = null;
-  let i = 78;
+
+  // Discretize volumes in chunks of 352 bytes (~2ms)
+  const chunksMaxVolume = [];
+  const totalChunksInVideo = Math.ceil(subChunk3Size / 352);
+  let chunk;
+  for (chunk = 0; chunk < totalChunksInVideo; chunk++) {
+    let maxVolumeInChunk = 0;
+    for (
+      let byteOffsetInChunk = 0;
+      byteOffsetInChunk < 352 && chunk * 352 + byteOffsetInChunk < subChunk3Size;
+      byteOffsetInChunk += 2
+    ) {
+      let byteOffset = 78 + chunk * 352 + byteOffsetInChunk;
+
+      let currentSample = fileData.readInt16LE(byteOffset);
+      if (Math.abs(currentSample) > maxVolumeInChunk) {
+        maxVolumeInChunk = Math.abs(currentSample);
+      }
+    }
+    chunksMaxVolume.push(maxVolumeInChunk);
+  }
+
+  console.log("Number of chunks: " + chunksMaxVolume.length);
+
+  let i = 0;
+
+  let noiseSections: Section[] = [];
+
+  let section: Section;
+  // Uses statemachine transitions to store silence sections
   silenceMachine.onTransition((state) => {
     if (state.changed && state.value !== previousState) {
+      let ms = byteToMilisseconds(i * 352 + 78);
+      if (previousState === "PotentialSilenceFinish" && state.value === "Noisy") {
+        section = { from: ms, to: null };
+        console.log(`At ${ms}ms: previous - ${previousState} current - ${state.value}`);
+      } else if (previousState === "PotentialSilenceStart" && state.value === "Silence") {
+        section.to = ms;
+        noiseSections.push(section);
+        console.log(`At ${ms}ms: previous - ${previousState} current - ${state.value}`);
+      }
+
       previousState = state.value;
-      console.log(`At ${byteToSeconds(i)}s: ${state.value}`);
     }
   });
 
+  // Run chunks through state machine
   silenceMachine.start();
-  // TODO: discretize volume on time
-  for (; i < 120 * byteRate; i += 2) {
-    let currentSample = fileData.readInt16LE(i);
-    if (Math.abs(currentSample) < maxvolume.maxVolume * silenceThreshold) {
+  for (; i < chunksMaxVolume.length; i++) {
+    let currentChunk = chunksMaxVolume[i];
+    if (currentChunk < maxvolume.maxVolume * silenceThreshold) {
       silenceMachine.send("SAMPLE_SILENCE");
     } else {
       silenceMachine.send("SAMPLE_NOISY");
     }
   }
+
+  console.log(`Number of noise sections in video: ${noiseSections.length}`);
 });
 
 function readBytesAsText(buffer: Buffer, offset: number, size: number): string {
@@ -128,10 +167,7 @@ function readBytesAsText(buffer: Buffer, offset: number, size: number): string {
   return text;
 }
 
-function getMaxVolume(
-  audioData: Buffer,
-  initialOffset: number
-): { offset: number; maxVolume: number } {
+function getMaxVolume(audioData: Buffer, initialOffset: number): { offset: number; maxVolume: number } {
   let maxVolume = Number.NEGATIVE_INFINITY;
   let offset = 0;
   for (let i = initialOffset; i < audioData.length; i += 2) {

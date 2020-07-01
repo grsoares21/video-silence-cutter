@@ -1,4 +1,5 @@
 import { exec } from "child_process";
+import { promisify } from "util";
 import * as fs from "fs";
 import silenceMachineCreator from "./silenceMachine";
 
@@ -19,6 +20,10 @@ const releaseTime = 10;
   console.log(`${stdout}`);
 });*/
 
+function sleep(millis) {
+  return new Promise((resolve) => setTimeout(resolve, millis));
+}
+
 type Section = { from: number; to?: number };
 
 const readStream = fs.createReadStream("temp/audio.wav");
@@ -32,32 +37,33 @@ readStream.on("data", (chunk) => {
   // data : <Buffer 74 65 73 20 63 61 6c 6c 65 64 20 63 68 75 6e 6b> 16
 });
 
-readStream.on("end", () => {
-  console.log("Audio file read.");
-  let fileData = Buffer.concat(data);
-  const chunkSize = fileData.readInt32LE(4);
-  const format = readBytesAsText(fileData, 8, 4);
+async function main() {
+  readStream.on("end", () => {
+    console.log("Audio file read.");
+    let fileData = Buffer.concat(data);
+    const chunkSize = fileData.readInt32LE(4);
+    const format = readBytesAsText(fileData, 8, 4);
 
-  const subChunk1Id = readBytesAsText(fileData, 12, 4);
+    const subChunk1Id = readBytesAsText(fileData, 12, 4);
 
-  console.log(subChunk1Id);
+    console.log(subChunk1Id);
 
-  const subChunk1Size = fileData.readInt32LE(16);
-  const audioFormat = fileData.readInt16LE(20);
-  const channelNumbers = fileData.readInt16LE(22);
-  const sampleRate = fileData.readInt32LE(24);
-  const byteRate = fileData.readInt32LE(28);
-  const bitsPerSample = fileData.readInt16LE(34);
+    const subChunk1Size = fileData.readInt32LE(16);
+    const audioFormat = fileData.readInt16LE(20);
+    const channelNumbers = fileData.readInt16LE(22);
+    const sampleRate = fileData.readInt32LE(24);
+    const byteRate = fileData.readInt32LE(28);
+    const bitsPerSample = fileData.readInt16LE(34);
 
-  let byteToSeconds = (bytes: number): number => {
-    return Math.round(bytes / byteRate);
-  };
+    let byteToSeconds = (bytes: number): number => {
+      return Math.round(bytes / byteRate);
+    };
 
-  let byteToMilisseconds = (bytes: number): number => {
-    return Math.round(bytes / (byteRate / 1000));
-  };
+    let byteToMilisseconds = (bytes: number): number => {
+      return Math.round(bytes / (byteRate / 1000));
+    };
 
-  console.log(`
+    console.log(`
     sub chunk 1 size: ${subChunk1Size}
     audioFormat: ${audioFormat}
     channel numbers: ${channelNumbers}
@@ -66,14 +72,14 @@ readStream.on("end", () => {
     bits per sample: ${bitsPerSample}
     byte per sample: ${bitsPerSample / 8}`);
 
-  const subChunk2Id = readBytesAsText(fileData, 36, 4);
+    const subChunk2Id = readBytesAsText(fileData, 36, 4);
 
-  const subChunk2Size = fileData.readInt32LE(40);
-  const listTypeId = readBytesAsText(fileData, 44, 4);
-  let listId = readBytesAsText(fileData, 48, 4);
-  const listTextSize = fileData.readInt32LE(52);
-  let listText = readBytesAsText(fileData, 56, listTextSize);
-  console.log(`
+    const subChunk2Size = fileData.readInt32LE(40);
+    const listTypeId = readBytesAsText(fileData, 44, 4);
+    let listId = readBytesAsText(fileData, 48, 4);
+    const listTextSize = fileData.readInt32LE(52);
+    let listText = readBytesAsText(fileData, 56, listTextSize);
+    console.log(`
     Sub chunk 2 id: ${subChunk2Id}
     sub chunk 2 size: ${subChunk2Size}
     list type id: ${listTypeId}
@@ -81,82 +87,112 @@ readStream.on("end", () => {
     list size: ${listTextSize}
     list text: ${listText}`);
 
-  const subChunk3Id = readBytesAsText(fileData, 70, 4);
-  const subChunk3Size = fileData.readInt32LE(74);
+    const subChunk3Id = readBytesAsText(fileData, 70, 4);
+    const subChunk3Size = fileData.readInt32LE(74);
 
-  console.log(`
+    console.log(`
     sub chunk 3 id: ${subChunk3Id}
     sub chunk 3 size: ${subChunk3Size}`);
 
-  let maxvolume = getMaxVolume(fileData, 78);
-  console.log(
-    `Max volume: ${maxvolume.maxVolume} Byte offset: ${maxvolume.offset} No Of seconds: ${byteToSeconds(
-      maxvolume.offset
-    )}`
-  );
+    let maxvolume = getMaxVolume(fileData, 78);
+    console.log(
+      `Max volume: ${maxvolume.maxVolume} Byte offset: ${maxvolume.offset} No Of seconds: ${byteToSeconds(
+        maxvolume.offset
+      )}`
+    );
 
-  const silenceMachine = silenceMachineCreator(attackTime, releaseTime);
+    const silenceMachine = silenceMachineCreator(attackTime, releaseTime);
 
-  let previousState = null;
+    let previousState = null;
 
-  // Discretize volumes in chunks of 352 bytes (~2ms)
-  const chunksMaxVolume = [];
-  const totalChunksInVideo = Math.ceil(subChunk3Size / 352);
-  let chunk;
-  for (chunk = 0; chunk < totalChunksInVideo; chunk++) {
-    let maxVolumeInChunk = 0;
-    for (
-      let byteOffsetInChunk = 0;
-      byteOffsetInChunk < 352 && chunk * 352 + byteOffsetInChunk < subChunk3Size;
-      byteOffsetInChunk += 2
-    ) {
-      let byteOffset = 78 + chunk * 352 + byteOffsetInChunk;
+    // Discretize volumes in chunks of 352 bytes (~2ms)
+    const chunksMaxVolume = [];
+    const totalChunksInVideo = Math.ceil(subChunk3Size / 352);
+    let chunk;
+    for (chunk = 0; chunk < totalChunksInVideo; chunk++) {
+      let maxVolumeInChunk = 0;
+      for (
+        let byteOffsetInChunk = 0;
+        byteOffsetInChunk < 352 && chunk * 352 + byteOffsetInChunk < subChunk3Size;
+        byteOffsetInChunk += 2
+      ) {
+        let byteOffset = 78 + chunk * 352 + byteOffsetInChunk;
 
-      let currentSample = fileData.readInt16LE(byteOffset);
-      if (Math.abs(currentSample) > maxVolumeInChunk) {
-        maxVolumeInChunk = Math.abs(currentSample);
+        let currentSample = fileData.readInt16LE(byteOffset);
+        if (Math.abs(currentSample) > maxVolumeInChunk) {
+          maxVolumeInChunk = Math.abs(currentSample);
+        }
+      }
+      chunksMaxVolume.push(maxVolumeInChunk);
+    }
+
+    console.log("Number of chunks: " + chunksMaxVolume.length);
+
+    let i = 0;
+
+    let noiseSections: Section[] = [];
+
+    let section: Section;
+    // Uses statemachine transitions to store silence sections
+    silenceMachine.onTransition((state) => {
+      if (state.changed && state.value !== previousState) {
+        let ms = byteToMilisseconds(i * 352 + 78);
+        if (previousState === "PotentialSilenceFinish" && state.value === "Noisy") {
+          section = { from: ms, to: null };
+          console.log(`At ${ms}ms: previous - ${previousState} current - ${state.value}`);
+        } else if (previousState === "PotentialSilenceStart" && state.value === "Silence") {
+          section.to = ms;
+          noiseSections.push(section);
+          console.log(`At ${ms}ms: previous - ${previousState} current - ${state.value}`);
+        }
+
+        previousState = state.value;
+      }
+    });
+
+    // Run chunks through state machine
+    silenceMachine.start();
+    for (; i < chunksMaxVolume.length; i++) {
+      let currentChunk = chunksMaxVolume[i];
+      if (currentChunk < maxvolume.maxVolume * silenceThreshold) {
+        silenceMachine.send("SAMPLE_SILENCE");
+      } else {
+        silenceMachine.send("SAMPLE_NOISY");
       }
     }
-    chunksMaxVolume.push(maxVolumeInChunk);
-  }
 
-  console.log("Number of chunks: " + chunksMaxVolume.length);
+    let concurrentProcesses = 0;
 
-  let i = 0;
-
-  let noiseSections: Section[] = [];
-
-  let section: Section;
-  // Uses statemachine transitions to store silence sections
-  silenceMachine.onTransition((state) => {
-    if (state.changed && state.value !== previousState) {
-      let ms = byteToMilisseconds(i * 352 + 78);
-      if (previousState === "PotentialSilenceFinish" && state.value === "Noisy") {
-        section = { from: ms, to: null };
-        console.log(`At ${ms}ms: previous - ${previousState} current - ${state.value}`);
-      } else if (previousState === "PotentialSilenceStart" && state.value === "Silence") {
-        section.to = ms;
-        noiseSections.push(section);
-        console.log(`At ${ms}ms: previous - ${previousState} current - ${state.value}`);
+    while (noiseSections.length > 0) {
+      if (concurrentProcesses < 4) {
+        concurrentProcesses++;
+        let i = noiseSections.length - 1;
+        let section = noiseSections.pop();
+        exec(
+          `ffmpeg -i raw.mp4 -ss ${section.from / 1000} -t ${(section.to - section.from) / 1000} temp/section${i}.mp4`,
+          (error, stdout, stderr) => {
+            if (error) {
+              console.error(`error: ${error.message}`);
+              return;
+            }
+            if (stderr) {
+              //console.error(`${stderr}`);
+              return;
+            }
+            if (stdout) {
+              //console.log(`${stdout}`);
+              return;
+            }
+            console.log("Finished " + i);
+            concurrentProcesses--;
+          }
+        );
       }
-
-      previousState = state.value;
     }
+
+    console.log(`Number of noise sections in video: ${noiseSections.length}`);
   });
-
-  // Run chunks through state machine
-  silenceMachine.start();
-  for (; i < chunksMaxVolume.length; i++) {
-    let currentChunk = chunksMaxVolume[i];
-    if (currentChunk < maxvolume.maxVolume * silenceThreshold) {
-      silenceMachine.send("SAMPLE_SILENCE");
-    } else {
-      silenceMachine.send("SAMPLE_NOISY");
-    }
-  }
-
-  console.log(`Number of noise sections in video: ${noiseSections.length}`);
-});
+}
 
 function readBytesAsText(buffer: Buffer, offset: number, size: number): string {
   let text = "";
@@ -181,6 +217,4 @@ function getMaxVolume(audioData: Buffer, initialOffset: number): { offset: numbe
   return { maxVolume, offset };
 }
 
-readStream.on("error", (err) => {
-  console.log("error :", err);
-});
+main();

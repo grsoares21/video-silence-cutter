@@ -6,6 +6,7 @@ import silenceMachineCreator from "./silenceMachine";
 const silenceThreshold = 0.075;
 const attackTime = 30;
 const releaseTime = 10;
+const attackBuffer = 150;
 
 //TODO: create temp folder if it doesn't exist, it if does, raise an error
 /*exec("ffmpeg -i raw.mp4 -ab 160k -ac 2 -vn temp/audio.wav", (error, stdout, stderr) => {
@@ -138,7 +139,7 @@ async function main() {
       if (state.changed && state.value !== previousState) {
         let ms = byteToMilisseconds(i * 352 + 78);
         if (previousState === "PotentialSilenceFinish" && state.value === "Noisy") {
-          section = { from: ms, to: null };
+          section = { from: ms - attackBuffer, to: null };
           console.log(`At ${ms}ms: previous - ${previousState} current - ${state.value}`);
         } else if (previousState === "PotentialSilenceStart" && state.value === "Silence") {
           section.to = ms;
@@ -161,34 +162,30 @@ async function main() {
       }
     }
 
-    let concurrentProcesses = 0;
+    let timeFilter = noiseSections.map(section => `between(t,${section.from / 1000},${section.to / 1000})`).join('+');
 
-    while (noiseSections.length > 0) {
-      if (concurrentProcesses < 4) {
-        concurrentProcesses++;
-        let i = noiseSections.length - 1;
-        let section = noiseSections.pop();
-        exec(
-          `ffmpeg -i raw.mp4 -ss ${section.from / 1000} -t ${(section.to - section.from) / 1000} temp/section${i}.mp4`,
-          (error, stdout, stderr) => {
-            if (error) {
-              console.error(`error: ${error.message}`);
-              return;
-            }
-            if (stderr) {
-              //console.error(`${stderr}`);
-              return;
-            }
-            if (stdout) {
-              //console.log(`${stdout}`);
-              return;
-            }
-            console.log("Finished " + i);
-            concurrentProcesses--;
-          }
-        );
+
+
+    exec(
+      `ffmpeg -i raw.mp4 -vf "select='${timeFilter}', setpts=N/FRAME_RATE/TB" -af "aselect='${timeFilter}', asetpts=N/SR/TB" output.mp4`,
+      (error, stdout, stderr) => {
+        if (error) {
+          console.error(`error: ${error.message}`);
+          return;
+        }
+        if (stderr) {
+          //console.error(`${stderr}`);
+          return;
+        }
+        if (stdout) {
+          //console.log(`${stdout}`);
+          return;
+        }
+        console.log("Finished " + i);
       }
-    }
+    );
+
+
 
     console.log(`Number of noise sections in video: ${noiseSections.length}`);
   });

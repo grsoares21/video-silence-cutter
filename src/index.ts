@@ -1,44 +1,82 @@
 import { exec } from "child_process";
+import { program } from "commander";
 import { promisify } from "util";
 import * as fs from "fs";
 import silenceMachineCreator from "./silenceMachine";
 
-const silenceThreshold = 0.075;
-const attackTime = 30;
-const releaseTime = 10;
-const attackBuffer = 150;
-
-//TODO: create temp folder if it doesn't exist, it if does, raise an error
-/*exec("ffmpeg -i raw.mp4 -ab 160k -ac 2 -vn temp/audio.wav", (error, stdout, stderr) => {
-  if (error) {
-    console.error(`error: ${error.message}`);
-    return;
-  }
-  if (stderr) {
-    console.error(`${stderr}`);
-    return;
-  }
-  console.log(`${stdout}`);
-});*/
-
-function sleep(millis) {
-  return new Promise((resolve) => setTimeout(resolve, millis));
-}
+const tempDir = "temp"
+const execAsync = promisify(exec);
 
 type Section = { from: number; to?: number };
 
-const readStream = fs.createReadStream("temp/audio.wav");
-const data: Buffer[] = [];
+function readBytesAsText(buffer: Buffer, offset: number, size: number): string {
+  let text = "";
+  for (let i = offset; i < offset + size; i++) {
+    text += String.fromCharCode(buffer.readInt8(i));
+  }
 
-console.log("Reading audio file");
-readStream.on("data", (chunk) => {
-  data.push(chunk as Buffer);
-  // data : <Buffer 49 20 61 6d 20 74 72 61 6e 73 66 65 72 72 69 6e> 16
-  // data : <Buffer 67 20 69 6e 20 62 79 74 65 73 20 62 79 20 62 79> 16
-  // data : <Buffer 74 65 73 20 63 61 6c 6c 65 64 20 63 68 75 6e 6b> 16
-});
+  return text;
+}
+
+function getMaxVolume(audioData: Buffer, initialOffset: number): { offset: number; maxVolume: number } {
+  let maxVolume = Number.NEGATIVE_INFINITY;
+  let offset = 0;
+  for (let i = initialOffset; i < audioData.length; i += 2) {
+    let currentSample = audioData.readInt16LE(i);
+    if (Math.abs(currentSample) > maxVolume) {
+      maxVolume = currentSample;
+      offset = i;
+    }
+  }
+
+  return { maxVolume, offset };
+}
+
 
 async function main() {
+  // delete directory recursively
+  program
+    .option('-i, --input <file>', 'Arquivo de entrada')
+    .option('-t, --threshold <threshold>', 'Limite de ruido (% do volume maximo)', parseFloat, 0.075)
+    .option('-a, --attack <attack>', 'Duração minima do silêncio (x * 2ms)', parseInt, 30)
+    .option('-r, --release <release>', 'Duração maxima do barulho (x * 2ms)', parseInt, 10)
+    .option('-s, --shift <shift>', 'Deslocamento do inicio de cada sessão (ms)', parseInt, 150)
+    .option('-o, --output <output>', 'Nome do arquivo de output', 'output.mp4')
+    .parse(process.argv);
+
+  const inputFileName: string = program.input;
+  const silenceThreshold: number = program.threshold;
+  const attackTime: number = program.attack;
+  const releaseTime: number = program.release;
+  const releaseShift: number = program.shift;
+  const outputFileName: string = program.output;
+
+  try {
+    fs.rmdirSync(tempDir, { recursive: true });
+    console.log(`${tempDir} is deleted!`);
+  } catch (err) {
+    console.error(`Error while deleting ${tempDir}.`);
+  }
+
+  fs.mkdirSync(tempDir);
+
+  const { stdout, stderr } = await execAsync(`ffmpeg -i ${inputFileName} -ab 160k -ac 2 -vn temp/audio.wav`);
+  if (stdout) {
+    console.log(stdout)
+  }
+  if (stderr) {
+    console.error(stderr);
+  }
+
+  const readStream = fs.createReadStream("temp/audio.wav");
+  const data: Buffer[] = [];
+
+  console.log("Reading audio file...");
+  readStream.on("data", (chunk) => {
+    data.push(chunk as Buffer);
+  });
+
+
   readStream.on("end", () => {
     console.log("Audio file read.");
     let fileData = Buffer.concat(data);
@@ -139,7 +177,7 @@ async function main() {
       if (state.changed && state.value !== previousState) {
         let ms = byteToMilisseconds(i * 352 + 78);
         if (previousState === "PotentialSilenceFinish" && state.value === "Noisy") {
-          section = { from: ms - attackBuffer, to: null };
+          section = { from: ms - releaseShift, to: null };
           console.log(`At ${ms}ms: previous - ${previousState} current - ${state.value}`);
         } else if (previousState === "PotentialSilenceStart" && state.value === "Silence") {
           section.to = ms;
@@ -164,10 +202,8 @@ async function main() {
 
     let timeFilter = noiseSections.map(section => `between(t,${section.from / 1000},${section.to / 1000})`).join('+');
 
-
-
     exec(
-      `ffmpeg -i raw.mp4 -vf "select='${timeFilter}', setpts=N/FRAME_RATE/TB" -af "aselect='${timeFilter}', asetpts=N/SR/TB" output.mp4`,
+      `ffmpeg -i ${inputFileName} -vf "select='${timeFilter}', setpts=N/FRAME_RATE/TB" -af "aselect='${timeFilter}', asetpts=N/SR/TB" ${outputFileName}`,
       (error, stdout, stderr) => {
         if (error) {
           console.error(`error: ${error.message}`);
@@ -185,33 +221,15 @@ async function main() {
       }
     );
 
-
-
     console.log(`Number of noise sections in video: ${noiseSections.length}`);
-  });
-}
 
-function readBytesAsText(buffer: Buffer, offset: number, size: number): string {
-  let text = "";
-  for (let i = offset; i < offset + size; i++) {
-    text += String.fromCharCode(buffer.readInt8(i));
-  }
-
-  return text;
-}
-
-function getMaxVolume(audioData: Buffer, initialOffset: number): { offset: number; maxVolume: number } {
-  let maxVolume = Number.NEGATIVE_INFINITY;
-  let offset = 0;
-  for (let i = initialOffset; i < audioData.length; i += 2) {
-    let currentSample = audioData.readInt16LE(i);
-    if (Math.abs(currentSample) > maxVolume) {
-      maxVolume = currentSample;
-      offset = i;
+    try {
+      fs.rmdirSync(tempDir, { recursive: true });
+      console.log(`${tempDir} is deleted!`);
+    } catch (err) {
+      console.error(`Error while deleting ${tempDir}.`);
     }
-  }
-
-  return { maxVolume, offset };
+  });
 }
 
 main();

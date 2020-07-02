@@ -52,8 +52,10 @@ async function main() {
   const outputFileName: string = program.output;
 
   try {
-    fs.rmdirSync(tempDir, { recursive: true });
-    console.log(`${tempDir} is deleted!`);
+    if (fs.existsSync(tempDir)) {
+      fs.rmdirSync(tempDir, { recursive: true });
+      console.log(`${tempDir} is deleted!`);
+    }
   } catch (err) {
     console.error(`Error while deleting ${tempDir}.`);
   }
@@ -202,6 +204,15 @@ async function main() {
 
     let timeFilter = noiseSections.map(section => `between(t,${section.from / 1000},${section.to / 1000})`).join('+');
 
+    try {
+      if (fs.existsSync(outputFileName)) {
+        fs.unlinkSync(outputFileName);
+        console.log(`${outputFileName} has been deleted!`);
+      }
+    } catch (err) {
+      console.error(`Error while deleting ${tempDir}.`);
+    }
+
     exec(
       `ffmpeg -i ${inputFileName} -vf "select='${timeFilter}', setpts=N/FRAME_RATE/TB" -af "aselect='${timeFilter}', asetpts=N/SR/TB" ${outputFileName}`,
       (error, stdout, stderr) => {
@@ -224,8 +235,10 @@ async function main() {
     console.log(`Number of noise sections in video: ${noiseSections.length}`);
 
     try {
-      fs.rmdirSync(tempDir, { recursive: true });
-      console.log(`${tempDir} is deleted!`);
+      if (fs.existsSync(tempDir)) {
+        fs.rmdirSync(tempDir, { recursive: true });
+        console.log(`${tempDir} has been deleted!`);
+      }
     } catch (err) {
       console.error(`Error while deleting ${tempDir}.`);
     }

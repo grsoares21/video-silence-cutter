@@ -34,20 +34,28 @@ function getMaxVolume(audioData: Buffer, initialOffset: number): { offset: numbe
 
 async function main() {
   // delete directory recursively
-  program
-    .option("-i, --input <file>", "Arquivo de entrada")
+
+  /*
+   TODO: the following parameters don't seem to be working properly yet. Still need some debugging
+    | `-t` or `--threshold` | `number`      | % of the max volume in the video to be considered a silence | 0.075      |
+    | `-a` or `--attack`    | `number`      | Minimum duration of a silence section (approximately in ms) | 60         |
+    | `-r` or `--release`   | `number`      | Minimum duration of a noise section (approximately in ms)   | 20         |
+    | `-s` or `--shift`     | `number`      | Backwards shift on the beginning of silence sections (ms)   | 150        |
     .option("-t, --threshold <threshold>", "Limite de ruido (% do volume maximo)", parseFloat, 0.075)
     .option("-a, --attack <attack>", "Duração minima do silêncio (x * 2ms)", parseInt, 60)
     .option("-r, --release <release>", "Duração maxima do barulho (x * 2ms)", parseInt, 20)
     .option("-s, --shift <shift>", "Deslocamento do inicio de cada sessão (ms)", parseInt, 150)
-    .option("-o, --output <output>", "Nome do arquivo de output", "output.mp4")
+  */
+  program
+    .option("-i, --input <file>", "Input file path")
+    .option("-o, --output <output>", "Output file path", "output.mp4")
     .parse(process.argv);
 
   const inputFileName: string = program.input;
-  const silenceThreshold: number = program.threshold;
-  const attackTime: number = program.attack;
-  const releaseTime: number = program.release;
-  const releaseShift: number = program.shift;
+  const silenceThreshold: number = 0.075;
+  const attackTime: number = 60;
+  const releaseTime: number = 20;
+  const releaseShift: number = 150;
   const outputFileName: string = program.output;
 
   try {

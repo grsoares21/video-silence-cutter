@@ -1,6 +1,6 @@
 {
-  "name": "js-silence-trimmer",
-  "version": "1.0.0",
+  "name": "video-silence-cutter",
+  "version": "0.0.1",
   "description": "A script for automatically trimming the silence of MP4 videos.",
   "main": "index.ts",
   "scripts": {

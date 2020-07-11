@@ -61,13 +61,7 @@ async function main() {
 
   fs.mkdirSync(tempDir);
 
-  const { stdout, stderr } = await execAsync(`ffmpeg -i ${inputFileName} -ab 160k -ac 2 -vn temp/audio.wav`);
-  if (stdout) {
-    console.log(stdout);
-  }
-  if (stderr) {
-    console.error(stderr);
-  }
+  await execAsync(`ffmpeg -i ${inputFileName} -ab 160k -ac 2 -vn temp/audio.wav`);
 
   const readStream = fs.createReadStream("temp/audio.wav");
   const data: Buffer[] = [];
@@ -82,11 +76,7 @@ async function main() {
     let fileData = Buffer.concat(data);
     const chunkSize = fileData.readInt32LE(4);
     const format = readBytesAsText(fileData, 8, 4);
-
     const subChunk1Id = readBytesAsText(fileData, 12, 4);
-
-    console.log(subChunk1Id);
-
     const subChunk1Size = fileData.readInt32LE(16);
     const audioFormat = fileData.readInt16LE(20);
     const channelNumbers = fileData.readInt16LE(22);
@@ -103,13 +93,17 @@ async function main() {
     };
 
     console.log(`
-    sub chunk 1 size: ${subChunk1Size}
-    audioFormat: ${audioFormat}
-    channel numbers: ${channelNumbers}
-    sample rate: ${sampleRate}
-    byteRate: ${byteRate}
-    bits per sample: ${bitsPerSample}
-    byte per sample: ${bitsPerSample / 8}`);
+      Chunk size: ${chunkSize}
+      Fromat: ${format}
+      Sub Chunk 1 id: ${subChunk1Id}
+      Sub Chunk 1 size: ${subChunk1Size}
+      Audio format: ${audioFormat}
+      Number of channels: ${channelNumbers}
+      Sample rate: ${sampleRate}
+      Byte rate: ${byteRate}
+      Bits per sample: ${bitsPerSample}
+      Bytes per sample: ${bitsPerSample / 8}
+    `);
 
     const subChunk2Id = readBytesAsText(fileData, 36, 4);
 
@@ -118,20 +112,23 @@ async function main() {
     let listId = readBytesAsText(fileData, 48, 4);
     const listTextSize = fileData.readInt32LE(52);
     let listText = readBytesAsText(fileData, 56, listTextSize);
+
     console.log(`
-    Sub chunk 2 id: ${subChunk2Id}
-    sub chunk 2 size: ${subChunk2Size}
-    list type id: ${listTypeId}
-    list info: ${listId}
-    list size: ${listTextSize}
-    list text: ${listText}`);
+      Sub chunk 2 id: ${subChunk2Id}
+      Sub chunk 2 size: ${subChunk2Size}
+      List type id: ${listTypeId}
+      List info: ${listId}
+      List size: ${listTextSize}
+      List text: ${listText}
+    `);
 
     const subChunk3Id = readBytesAsText(fileData, 70, 4);
     const subChunk3Size = fileData.readInt32LE(74);
 
     console.log(`
-    sub chunk 3 id: ${subChunk3Id}
-    sub chunk 3 size: ${subChunk3Size}`);
+      Sub chunk 3 id: ${subChunk3Id}
+      Sub chunk 3 size: ${subChunk3Size}
+    `);
 
     let maxvolume = getMaxVolume(fileData, 78);
     console.log(
@@ -165,23 +162,19 @@ async function main() {
       chunksMaxVolume.push(maxVolumeInChunk);
     }
 
-    console.log("Number of chunks: " + chunksMaxVolume.length);
-
     let i = 0;
-
     let noiseSections: Section[] = [];
-
-    let section: Section;
+    let currentSection: Section;
     // Uses statemachine transitions to store silence sections
     silenceMachine.onTransition((state) => {
       if (state.changed && state.value !== previousState) {
         let ms = byteToMilisseconds(i * 352 + 78);
         if (previousState === "PotentialSilenceFinish" && state.value === "Noisy") {
-          section = { from: ms - releaseShift, to: null };
+          currentSection = { from: ms - releaseShift, to: null };
         } else if (previousState === "PotentialSilenceStart" && state.value === "Silence") {
-          section.to = ms;
-          noiseSections.push(section);
-          console.log(`Noise section identified between ${section.from}ms and ${section.to}ms`);
+          currentSection.to = ms;
+          noiseSections.push(currentSection);
+          console.log(`Noise section identified between ${currentSection.from}ms and ${currentSection.to}ms`);
         }
 
         previousState = state.value;
@@ -223,7 +216,7 @@ async function main() {
         }
 
         if (error) {
-          console.error(`error: ${error.message}`);
+          console.error(`FFmpeg Error: ${error.message}`);
           return;
         }
 

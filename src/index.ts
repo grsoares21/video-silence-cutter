@@ -4,7 +4,7 @@ import { promisify } from "util";
 import * as fs from "fs";
 import silenceMachineCreator from "./silenceMachine";
 
-const tempDir = "temp"
+const tempDir = "temp";
 const execAsync = promisify(exec);
 
 type Section = { from: number; to?: number };
@@ -32,16 +32,15 @@ function getMaxVolume(audioData: Buffer, initialOffset: number): { offset: numbe
   return { maxVolume, offset };
 }
 
-
 async function main() {
   // delete directory recursively
   program
-    .option('-i, --input <file>', 'Arquivo de entrada')
-    .option('-t, --threshold <threshold>', 'Limite de ruido (% do volume maximo)', parseFloat, 0.075)
-    .option('-a, --attack <attack>', 'Duração minima do silêncio (x * 2ms)', parseInt, 30)
-    .option('-r, --release <release>', 'Duração maxima do barulho (x * 2ms)', parseInt, 10)
-    .option('-s, --shift <shift>', 'Deslocamento do inicio de cada sessão (ms)', parseInt, 150)
-    .option('-o, --output <output>', 'Nome do arquivo de output', 'output.mp4')
+    .option("-i, --input <file>", "Arquivo de entrada")
+    .option("-t, --threshold <threshold>", "Limite de ruido (% do volume maximo)", parseFloat, 0.075)
+    .option("-a, --attack <attack>", "Duração minima do silêncio (x * 2ms)", parseInt, 60)
+    .option("-r, --release <release>", "Duração maxima do barulho (x * 2ms)", parseInt, 20)
+    .option("-s, --shift <shift>", "Deslocamento do inicio de cada sessão (ms)", parseInt, 150)
+    .option("-o, --output <output>", "Nome do arquivo de output", "output.mp4")
     .parse(process.argv);
 
   const inputFileName: string = program.input;
@@ -64,7 +63,7 @@ async function main() {
 
   const { stdout, stderr } = await execAsync(`ffmpeg -i ${inputFileName} -ab 160k -ac 2 -vn temp/audio.wav`);
   if (stdout) {
-    console.log(stdout)
+    console.log(stdout);
   }
   if (stderr) {
     console.error(stderr);
@@ -77,7 +76,6 @@ async function main() {
   readStream.on("data", (chunk) => {
     data.push(chunk as Buffer);
   });
-
 
   readStream.on("end", () => {
     console.log("Audio file read.");
@@ -142,7 +140,7 @@ async function main() {
       )}`
     );
 
-    const silenceMachine = silenceMachineCreator(attackTime, releaseTime);
+    const silenceMachine = silenceMachineCreator(Math.round(attackTime / 2), Math.round(releaseTime / 2));
 
     let previousState = null;
 
@@ -180,11 +178,10 @@ async function main() {
         let ms = byteToMilisseconds(i * 352 + 78);
         if (previousState === "PotentialSilenceFinish" && state.value === "Noisy") {
           section = { from: ms - releaseShift, to: null };
-          console.log(`At ${ms}ms: previous - ${previousState} current - ${state.value}`);
         } else if (previousState === "PotentialSilenceStart" && state.value === "Silence") {
           section.to = ms;
           noiseSections.push(section);
-          console.log(`At ${ms}ms: previous - ${previousState} current - ${state.value}`);
+          console.log(`Noise section identified between ${section.from}ms and ${section.to}ms`);
         }
 
         previousState = state.value;
@@ -202,7 +199,7 @@ async function main() {
       }
     }
 
-    let timeFilter = noiseSections.map(section => `between(t,${section.from / 1000},${section.to / 1000})`).join('+');
+    let timeFilter = noiseSections.map((section) => `between(t,${section.from / 1000},${section.to / 1000})`).join("+");
 
     try {
       if (fs.existsSync(outputFileName)) {
@@ -216,32 +213,23 @@ async function main() {
     exec(
       `ffmpeg -i ${inputFileName} -vf "select='${timeFilter}', setpts=N/FRAME_RATE/TB" -af "aselect='${timeFilter}', asetpts=N/SR/TB" ${outputFileName}`,
       (error, stdout, stderr) => {
+        try {
+          if (fs.existsSync(tempDir)) {
+            fs.rmdirSync(tempDir, { recursive: true });
+            console.log(`${tempDir} has been deleted!`);
+          }
+        } catch (err) {
+          console.error(`Error while deleting ${tempDir}.`);
+        }
+
         if (error) {
           console.error(`error: ${error.message}`);
           return;
         }
-        if (stderr) {
-          //console.error(`${stderr}`);
-          return;
-        }
-        if (stdout) {
-          //console.log(`${stdout}`);
-          return;
-        }
-        console.log("Finished " + i);
+
+        console.log(`Number of noise sections in video: ${noiseSections.length}`);
       }
     );
-
-    console.log(`Number of noise sections in video: ${noiseSections.length}`);
-
-    try {
-      if (fs.existsSync(tempDir)) {
-        fs.rmdirSync(tempDir, { recursive: true });
-        console.log(`${tempDir} has been deleted!`);
-      }
-    } catch (err) {
-      console.error(`Error while deleting ${tempDir}.`);
-    }
   });
 }
 

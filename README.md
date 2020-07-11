@@ -1,5 +1,5 @@
 # Video Silence Cutter
-A NodeJS script written in TypeScript to trim out quiet sections out of videos.
+A NodeJS script written in TypeScript to trim quiet sections out of videos.
 
 ## Requirements
 This script uses [FFmpeg](https://ffmpeg.org/) for its manipulations on video and audio files.
@@ -13,7 +13,7 @@ npm install
 ```
 
 ## Running
-After installing all dependencies build the project by running the following command:
+After installing all dependencies, build the project by running the following command:
 ```
 npm run build
 ```
@@ -21,7 +21,7 @@ You can run it either by directly running the built script:
 ```
 node build/index.js -i input.mp4
 ```
-Or by you can run it via the `start` npm task:
+Or you can run it via the `start` npm task:
 ```
 npm run start -- -i input.mp4
 ```
@@ -30,6 +30,7 @@ npm run start -- -i input.mp4
 |-----------------------|---------------|-------------------------------------------------------------|------------|
 | `-i` or `--input`     | `string`      | Path to the input video file                                | N/A        |
 | `-o` or `--output`    | `string`      | Name of the output file (with extension)                    | output.mp4 |
+
 Example:
 ```
 npm run start -- -i input.mp4 -o output.mp4

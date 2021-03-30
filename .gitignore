@@ -2,3 +2,4 @@
 *.wav
 node_modules
 build
+target

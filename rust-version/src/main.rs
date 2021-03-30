@@ -1,6 +1,9 @@
 use getopts::Options;
+use hound::WavReader;
 use std::env;
 use std::fs;
+use std::fs::File;
+use std::io::BufReader;
 use std::path::Path;
 use std::process::Command;
 
@@ -67,6 +70,18 @@ fn main() -> std::io::Result<()> {
     split_audio_process
         .wait()
         .expect("Failed to wait for process to separate video from audio");
+
+    let audio_file = File::open("temp/audio.wav")?;
+    let audio_file_reader = BufReader::new(audio_file);
+
+    let wav_reader = WavReader::new(audio_file_reader);
+
+    let spec = wav_reader.unwrap().spec();
+
+    println!(
+        "Channels: {}\nBits per sample: {}\nSample rate:{}",
+        spec.channels, spec.bits_per_sample, spec.sample_rate
+    );
 
     Ok(())
 }

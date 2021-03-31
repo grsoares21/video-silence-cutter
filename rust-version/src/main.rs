@@ -74,14 +74,25 @@ fn main() -> std::io::Result<()> {
     let audio_file = File::open("temp/audio.wav")?;
     let audio_file_reader = BufReader::new(audio_file);
 
-    let wav_reader = WavReader::new(audio_file_reader);
+    let mut wav_reader = WavReader::new(audio_file_reader).unwrap();
 
-    let spec = wav_reader.unwrap().spec();
+    let spec = wav_reader.spec();
 
     println!(
         "Channels: {}\nBits per sample: {}\nSample rate:{}",
         spec.channels, spec.bits_per_sample, spec.sample_rate
     );
+
+    // we know that ffmpeg will produce a 16 bit sample, otherwise we'd need to check the bits per sample to choose the correct type
+    // read all samples of the file an put in a vectore (no need for a buffer here)
+    let samples: Vec<i16> = wav_reader
+        .samples::<i16>()
+        .map(|sample| sample.unwrap())
+        .collect();
+
+    let max_volume = samples.iter().map(|sample| sample.abs()).max().unwrap();
+
+    println!("Max volume: {}", max_volume);
 
     Ok(())
 }

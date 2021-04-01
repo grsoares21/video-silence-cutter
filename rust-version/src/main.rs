@@ -18,6 +18,10 @@ const ATTACK_TIME: u32 = 150;
 
 const RELEASE_TIME: u32 = 20;
 
+// this represents how many milliseconds each noise period will be expanded after recognized
+// this setting reduces the effect of sound starting from nothing or being cut in the middle
+const EXPAND: usize = 400;
+
 enum SilenceMachineStates {
     Silence,
     PotentialNoise,
@@ -25,6 +29,7 @@ enum SilenceMachineStates {
     PotentialSilence,
 }
 
+#[derive(Copy, Clone)]
 struct Section {
     from: usize,
     to: usize,
@@ -193,6 +198,72 @@ fn main() -> std::io::Result<()> {
             }
         }
     }
+
+    println!("Expanding noise sections by {}ms", EXPAND);
+
+    let mut expanded_noise_sections: Vec<Section> = Vec::new();
+
+    let mut current_section = Section {
+        from: if EXPAND > noise_sections[0].from {
+            0
+        } else {
+            noise_sections[0].from - EXPAND
+        },
+        to: cmp::min(noise_sections[0].to + EXPAND, max_volume_chunks.len()),
+    };
+
+    for section in &noise_sections[1..] {
+        if current_section.to >= section.from - EXPAND {
+            current_section.to = section.to + EXPAND;
+        } else {
+            expanded_noise_sections.push(current_section);
+            current_section = Section {
+                from: section.from - EXPAND,
+                to: section.to + EXPAND,
+            }
+        }
+    }
+    expanded_noise_sections.push(current_section);
+
+    println!(
+        "Number of recognized sections: {}, Number of sections after expanding: {}",
+        noise_sections.len(),
+        expanded_noise_sections.len()
+    );
+    println!("Resulting expanded sections:");
+    for section in &expanded_noise_sections {
+        println!("From {}ms to {}ms", section.from, section.to);
+    }
+
+    let time_filter = expanded_noise_sections
+        .iter()
+        .map(|section| {
+            format!(
+                "between(t,{},{})",
+                section.from as f32 / 1000f32,
+                section.to as f32 / 1000f32
+            )
+        })
+        .collect::<Vec<String>>()
+        .join("+");
+
+    let mut cut_video_process = Command::new("ffmpeg")
+        .args(&["-i", &input_file_name])
+        .args(&[
+            "-vf",
+            format!("select='{}', setpts=N/FRAME_RATE/TB", time_filter).as_str(),
+        ])
+        .args(&[
+            "-af",
+            format!("aselect='{}', asetpts=N/SR/TB", time_filter).as_str(),
+        ])
+        .arg(output_file_name)
+        .spawn()
+        .expect("Failed to spawn process to cut video");
+
+    cut_video_process
+        .wait()
+        .expect("Failed to wait for process to cut video");
 
     Ok(())
 }

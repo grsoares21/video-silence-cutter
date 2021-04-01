@@ -1,5 +1,6 @@
 use getopts::Options;
 use hound::WavReader;
+use std::cmp;
 use std::env;
 use std::fs;
 use std::fs::File;
@@ -8,6 +9,26 @@ use std::path::Path;
 use std::process::Command;
 
 const TEMP_DIR: &str = "./temp";
+
+// this represents a percentage of the max volume of the video under which we'll consider the video to be silent
+const SILENCE_THRESHOLD: f32 = 0.05;
+// this represents how many consecutive milliseconds of noise or silence need to happen
+// to consider that a noise section started or ended respctively
+const ATTACK_TIME: u32 = 150;
+
+const RELEASE_TIME: u32 = 20;
+
+enum SilenceMachineStates {
+    Silence,
+    PotentialNoise,
+    Noise,
+    PotentialSilence,
+}
+
+struct Section {
+    from: usize,
+    to: usize,
+}
 
 fn main() -> std::io::Result<()> {
     let args: Vec<String> = env::args().collect();
@@ -31,7 +52,7 @@ fn main() -> std::io::Result<()> {
     let matches = match opts.parse(&args[1..]) {
         Ok(matches) => matches,
         Err(error) => {
-            panic!(error.to_string())
+            panic!("{}", error.to_string())
         }
     };
 
@@ -83,6 +104,9 @@ fn main() -> std::io::Result<()> {
         spec.channels, spec.bits_per_sample, spec.sample_rate
     );
 
+    // sample_rate is in samples per second per channel
+    let samples_per_millisecond = (spec.sample_rate as u32 / 1000) * spec.channels as u32;
+
     // we know that ffmpeg will produce a 16 bit sample, otherwise we'd need to check the bits per sample to choose the correct type
     // read all samples of the file an put in a vectore (no need for a buffer here)
     let samples: Vec<i16> = wav_reader
@@ -91,8 +115,84 @@ fn main() -> std::io::Result<()> {
         .collect();
 
     let max_volume = samples.iter().map(|sample| sample.abs()).max().unwrap();
-
     println!("Max volume: {}", max_volume);
+
+    // create chunks of 1ms and store the max volume in each chunk
+    let mut max_volume_chunks: Vec<i16> = Vec::new();
+    for i in 0..samples.len() / samples_per_millisecond as usize {
+        let chunk_initial_offset = i * samples_per_millisecond as usize;
+        let chunk_final_offset =
+            cmp::min((i + 1) * samples_per_millisecond as usize, samples.len());
+
+        let chunk: &[i16] = &samples[chunk_initial_offset..chunk_final_offset];
+
+        let max_volume_in_chunk = chunk.iter().map(|sample| sample.abs()).max().unwrap();
+        max_volume_chunks.push(max_volume_in_chunk);
+    }
+
+    println!(
+        "Number of chunks (number of millisseconds): {}",
+        max_volume_chunks.len()
+    );
+
+    let mut current_state = SilenceMachineStates::Silence;
+    let mut consecutive_silence_chunks = 0;
+    let mut consecutive_noise_chunks = 0;
+
+    let silence_threshold = (max_volume as f32 * SILENCE_THRESHOLD) as i16;
+
+    let mut noise_sections: Vec<Section> = Vec::new();
+
+    let mut beginning_of_noise: usize = 0;
+
+    for i in 0..max_volume_chunks.len() {
+        if max_volume_chunks[i] < silence_threshold {
+            // silent chunk
+            match current_state {
+                SilenceMachineStates::Silence => {}
+                SilenceMachineStates::Noise => {
+                    current_state = SilenceMachineStates::PotentialSilence;
+                    consecutive_silence_chunks = 1;
+                }
+                SilenceMachineStates::PotentialSilence => {
+                    consecutive_silence_chunks += 1;
+                    if consecutive_silence_chunks > ATTACK_TIME {
+                        noise_sections.push(Section {
+                            from: beginning_of_noise,
+                            to: i,
+                        });
+                        println!(
+                            "Noise section identified from: {}ms to {}ms",
+                            beginning_of_noise, i
+                        );
+                        current_state = SilenceMachineStates::Silence;
+                    }
+                }
+                SilenceMachineStates::PotentialNoise => {
+                    current_state = SilenceMachineStates::Silence;
+                }
+            }
+        } else {
+            // noisy chunk
+            match current_state {
+                SilenceMachineStates::Silence => {
+                    current_state = SilenceMachineStates::PotentialNoise;
+                    consecutive_noise_chunks = 1;
+                }
+                SilenceMachineStates::Noise => {}
+                SilenceMachineStates::PotentialSilence => {
+                    current_state = SilenceMachineStates::Noise;
+                }
+                SilenceMachineStates::PotentialNoise => {
+                    consecutive_noise_chunks += 1;
+                    if consecutive_noise_chunks > RELEASE_TIME {
+                        beginning_of_noise = i;
+                        current_state = SilenceMachineStates::Noise;
+                    }
+                }
+            }
+        }
+    }
 
     Ok(())
 }

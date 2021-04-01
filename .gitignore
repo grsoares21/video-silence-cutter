@@ -1,5 +1,4 @@
 *.mp4
 *.wav
-node_modules
 build
 target

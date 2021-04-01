@@ -1,5 +1,5 @@
 [package]
-name = "rust-version"
+name = "video-silence-trimmer"
 version = "0.1.0"
 authors = ["Gabriel Restori Soares <soares-21@hotmail.com>"]
 edition = "2018"

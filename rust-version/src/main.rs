@@ -5,6 +5,7 @@ use std::env;
 use std::fs;
 use std::fs::File;
 use std::io::BufReader;
+use std::io::Write;
 use std::path::Path;
 use std::process::Command;
 
@@ -247,16 +248,24 @@ fn main() -> std::io::Result<()> {
         .collect::<Vec<String>>()
         .join("+");
 
+    let mut audio_filter_file = File::create("./temp/audio_filter.txt")?;
+    let mut video_filter_file = File::create("./temp/video_filter.txt")?;
+
+    write!(
+        video_filter_file,
+        "select='{}', setpts=N/FRAME_RATE/TB",
+        time_filter
+    )?;
+    write!(
+        audio_filter_file,
+        "aselect='{}', asetpts=N/SR/TB",
+        time_filter
+    )?;
+
     let mut cut_video_process = Command::new("ffmpeg")
         .args(&["-i", &input_file_name])
-        .args(&[
-            "-vf",
-            format!("select='{}', setpts=N/FRAME_RATE/TB", time_filter).as_str(),
-        ])
-        .args(&[
-            "-af",
-            format!("aselect='{}', asetpts=N/SR/TB", time_filter).as_str(),
-        ])
+        .args(&["-filter_script:v", "./temp/video_filter.txt"])
+        .args(&["-filter_script:a", "./temp/audio_filter.txt"])
         .arg(output_file_name)
         .spawn()
         .expect("Failed to spawn process to cut video");

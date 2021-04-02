@@ -1,5 +1,6 @@
 use getopts::Options;
 use hound::WavReader;
+use indicatif::ProgressBar;
 use std::cmp;
 use std::env;
 use std::fs;
@@ -99,7 +100,7 @@ fn main() -> std::io::Result<()> {
         .expect("Failed to wait for process to separate video from audio");
 
     let audio_file = File::open("temp/audio.wav")?;
-    let audio_file_reader = BufReader::new(audio_file);
+    let audio_file_reader = BufReader::with_capacity(128 * 1024 * 1024, audio_file);
 
     let mut wav_reader = WavReader::new(audio_file_reader).unwrap();
 
@@ -115,22 +116,47 @@ fn main() -> std::io::Result<()> {
 
     // we know that ffmpeg will produce a 16 bit sample, otherwise we'd need to check the bits per sample to choose the correct type
     // read all samples of the file an put in a vectore (no need for a buffer here)
-    let samples: Vec<i16> = wav_reader
-        .samples::<i16>()
-        .map(|sample| sample.unwrap())
-        .collect();
+    println!("Reading audio file...");
+    let mut progress_bar = ProgressBar::new(100);
+    let mut read_samples = 0u32;
+    let one_percent_samples = wav_reader.len() / 100;
 
-    let max_volume = samples.iter().map(|sample| sample.abs()).max().unwrap();
+    let samples: Vec<i32> = wav_reader
+        .samples::<i32>()
+        .map(|sample| {
+            read_samples += 1;
+            if read_samples % one_percent_samples == 0 {
+                progress_bar.inc(1)
+            }
+            sample.unwrap()
+        })
+        .collect();
+    progress_bar.finish_and_clear();
+
+    println!("Finding max volume in the audio...");
+    progress_bar = ProgressBar::new(100);
+    read_samples = 0u32;
+    let max_volume = samples
+        .iter()
+        .map(|sample| {
+            read_samples += 1;
+            if read_samples % one_percent_samples == 0 {
+                progress_bar.inc(1)
+            }
+            sample.abs()
+        })
+        .max()
+        .unwrap();
     println!("Max volume: {}", max_volume);
 
     // create chunks of 1ms and store the max volume in each chunk
-    let mut max_volume_chunks: Vec<i16> = Vec::new();
+    let mut max_volume_chunks: Vec<i32> = Vec::new();
     for i in 0..samples.len() / samples_per_millisecond as usize {
         let chunk_initial_offset = i * samples_per_millisecond as usize;
         let chunk_final_offset =
             cmp::min((i + 1) * samples_per_millisecond as usize, samples.len());
 
-        let chunk: &[i16] = &samples[chunk_initial_offset..chunk_final_offset];
+        let chunk: &[i32] = &samples[chunk_initial_offset..chunk_final_offset];
 
         let max_volume_in_chunk = chunk.iter().map(|sample| sample.abs()).max().unwrap();
         max_volume_chunks.push(max_volume_in_chunk);
@@ -145,7 +171,7 @@ fn main() -> std::io::Result<()> {
     let mut consecutive_silence_chunks = 0;
     let mut consecutive_noise_chunks = 0;
 
-    let silence_threshold = (max_volume as f32 * SILENCE_THRESHOLD) as i16;
+    let silence_threshold = (max_volume as f32 * SILENCE_THRESHOLD) as i32;
 
     let mut noise_sections: Vec<Section> = Vec::new();
 
@@ -167,10 +193,6 @@ fn main() -> std::io::Result<()> {
                             from: beginning_of_noise,
                             to: i,
                         });
-                        println!(
-                            "Noise section identified from: {}ms to {}ms",
-                            beginning_of_noise, i
-                        );
                         current_state = SilenceMachineStates::Silence;
                     }
                 }

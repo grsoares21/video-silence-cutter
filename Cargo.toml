@@ -9,3 +9,4 @@ edition = "2018"
 [dependencies]
 getopts = "0.2"
 hound = "3.0.0"
+indicatif = "0.15.0"
